@@ -83,8 +83,7 @@
   async function registerUser() {
     const userId = tg.initDataUnsafe?.user?.id?.toString();
     const username = tg.initDataUnsafe?.user?.username || "unknown";
-    const referred_by = new URLSearchParams(window.location.search).get("start");
-
+    const referred_by = tg.initDataUnsafe?.start_param;
     if (!userId) return;
 
     const body = {
