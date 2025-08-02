@@ -15,6 +15,7 @@
     .user-info img { border-radius:50%; width:50px; height:50px; margin-right:10px; }
     .leaderboard { margin-left: 20px;}
     #leaderboard-list li { list-style:none; padding:5px; border-bottom:1px solid #444; }
+    .loading { color: #aaa; font-style: italic; }
   </style>
 </head>
 <body>
@@ -52,7 +53,9 @@
 
 <div id="leaderboard" class="section">
   <h3>🏆 Leaderboard</h3>
-  <ul id="leaderboard-list"></ul>
+  <ul id="leaderboard-list">
+    <li class="loading">Loading leaderboard...</li>
+  </ul>
 </div>
 
 <div class="nav">
@@ -69,6 +72,7 @@
   let points = 0;
   const tg = window.Telegram.WebApp;
   tg.ready();
+  tg.expand(); // Make sure the app expands to full height
 
   function showSection(id) {
     document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
@@ -96,6 +100,7 @@
         body: JSON.stringify(body)
       });
 
+      if (!res.ok) throw new Error('Registration failed');
       const data = await res.json();
       console.log("📥 Registered:", data);
     } catch (err) {
@@ -104,26 +109,46 @@
   }
 
   async function addPoints(amount) {
-    const userId = tg.initDataUnsafe?.user?.id?.toString() || "guest";
-    await fetch(`${API_URL}/add_points`, {
-      method:"POST",
-      headers:{ "Content-Type":"application/json" },
-      body:JSON.stringify({ user_id:userId, amount:amount })
-    });
-    updatePoints();
-    alert(`+${amount} points added!`);
+    const userId = tg.initDataUnsafe?.user?.id?.toString();
+    if (!userId) {
+      alert("Please open in Telegram to earn points");
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/add_points`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: userId, amount: amount })
+      });
+
+      if (!response.ok) throw new Error('Failed to add points');
+      await updatePoints();
+      alert(`+${amount} points added!`);
+    } catch (error) {
+      console.error("Add Points Error:", error);
+      alert("Failed to add points. Please try again.");
+    }
   }
 
   async function updatePoints() {
-    const userId = tg.initDataUnsafe?.user?.id?.toString() || "guest";
+    const userId = tg.initDataUnsafe?.user?.id?.toString();
+    if (!userId) {
+      document.getElementById("user-points").textContent = "N/A";
+      return;
+    }
+
     try {
-      const res = await fetch(`${API_URL}/points/${userId}`);
+      const res = await fetch(`${API_URL}/get_points/${userId}`);
+      if (!res.ok) throw new Error('Failed to fetch points');
+      
       const data = await res.json();
-      points = data.points;
+      points = data.points || 0;
       document.getElementById("user-points").textContent = points;
       document.getElementById("balance-points").textContent = points;
     } catch (e) {
       console.error("Point Fetch Error", e);
+      document.getElementById("user-points").textContent = "Error";
     }
   }
 
@@ -132,29 +157,59 @@
   }
 
   async function loadLeaderboard() {
-    const res = await fetch(`${API_URL}/leaderboard`);
-    const data = await res.json();
-    let html = "";
-    data.forEach(u => html += `<li>${u.user_id} - ${u.points} ⭐</li>`);
-    document.getElementById("leaderboard-list").innerHTML = html;
+    const listElement = document.getElementById("leaderboard-list");
+    listElement.innerHTML = '<li class="loading">Loading leaderboard...</li>';
+    
+    try {
+      const res = await fetch(`${API_URL}/leaderboard`);
+      if (!res.ok) throw new Error('Failed to load leaderboard');
+      
+      const data = await res.json();
+      let html = "";
+      
+      if (data.leaderboard && data.leaderboard.length > 0) {
+        data.leaderboard.forEach((u, index) => {
+          const displayName = u.username ? `@${u.username}` : `User ${u.id.slice(0, 6)}`;
+          html += `<li>${index + 1}. ${displayName} - ${u.points} ⭐</li>`;
+        });
+      } else {
+        html = "<li>No leaderboard data available</li>";
+      }
+      
+      listElement.innerHTML = html;
+    } catch (e) {
+      console.error("Leaderboard Error", e);
+      listElement.innerHTML = "<li>Error loading leaderboard</li>";
+    }
   }
 
   function copyInviteLink() {
     const link = document.getElementById("invite-link").textContent;
-    navigator.clipboard.writeText(link).then(() => alert("✅ Invite Link Copied!"));
+    navigator.clipboard.writeText(link).then(() => {
+      tg.showAlert("✅ Invite Link Copied!");
+    }).catch(err => {
+      console.error("Copy failed:", err);
+      tg.showAlert("Failed to copy link");
+    });
   }
 
+  // Initialize user data
   const user = tg.initDataUnsafe?.user;
   if (user) {
-    document.getElementById('user-name').textContent = `Hello, ${user.first_name}`;
-    document.getElementById('user-username').textContent = `@${user.username || 'No Username'}`;
+    document.getElementById('user-name').textContent = user.first_name ? `Hello, ${user.first_name}` : "Hello";
+    document.getElementById('user-username').textContent = user.username ? `@${user.username}` : "";
     document.getElementById('user-avatar').src = user.photo_url || 'https://placehold.it/60x60';
-    document.getElementById("invite-link").textContent =
-      `https://t.me/${botUsername}?start=${user.id}`;
+    document.getElementById("invite-link").textContent = `https://t.me/${botUsername}?start=${user.id}`;
+  } else {
+    document.getElementById('user-name').textContent = "Please open in Telegram";
+    document.getElementById('user-avatar').src = 'https://placehold.it/60x60';
   }
 
-  registerUser();
-  updatePoints();
+  // Initialize app
+  (async function initApp() {
+    await registerUser();
+    await updatePoints();
+  })();
 </script>
 
 </body>
